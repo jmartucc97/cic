@@ -202,13 +202,32 @@ def load_retraction_index(csv_path):
 # ==========================================================================
 # OpenAlex
 # ==========================================================================
+import time  # noqa: E402  (kept local to the network section)
+
+OA_THROTTLE = 0.10   # seconds between calls — keeps us under OpenAlex's patience
+OA_RETRIES = 4       # transient errors are common in bulk; retry before giving up
+
+
 def oa_get(path, params, email):
     params = dict(params or {})
     if email:
         params["mailto"] = email
-    r = requests.get("%s/%s" % (OPENALEX, path), params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
+    last_err = None
+    for attempt in range(OA_RETRIES):
+        try:
+            r = requests.get("%s/%s" % (OPENALEX, path), params=params, timeout=30)
+            if r.status_code == 429:                 # explicit rate-limit signal
+                time.sleep(2 ** attempt)             # exponential back-off
+                continue
+            r.raise_for_status()
+            time.sleep(OA_THROTTLE)                  # be polite between calls
+            return r.json()
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.HTTPError) as e:
+            last_err = e
+            time.sleep(2 ** attempt)                 # 1s, 2s, 4s, 8s back-off
+    raise last_err                                   # exhausted retries
 
 
 def fetch_work(doi, email):
@@ -219,19 +238,31 @@ def fetch_work(doi, email):
 def fetch_works_meta(ref_ids, email, include_refs=False):
     """ref_ids: OpenAlex IDs. Returns dicts {id,doi,title,year[,referenced_works]}.
     include_refs=True also pulls each work's OWN reference list (needed to walk
-    to depth 2)."""
+    to depth 2). A chunk that fails after retries is skipped (with a warning) so
+    a long crawl degrades gracefully instead of losing everything."""
     out = []
     short = [rid.rsplit("/", 1)[-1] for rid in ref_ids]
     select = "id,doi,title,publication_year"
     if include_refs:
         select += ",referenced_works"
-    for i in range(0, len(short), 50):                  # OpenAlex filter cap
+    n_batches = (len(short) + 49) // 50
+    failed = 0
+    for bi, i in enumerate(range(0, len(short), 50), 1):   # OpenAlex filter cap
         chunk = short[i:i + 50]
-        data = oa_get("works", {
-            "filter": "ids.openalex:" + "|".join(chunk),
-            "per-page": 50,
-            "select": select,
-        }, email)
+        if n_batches > 5:                                  # progress on big crawls
+            print("    fetching batch %d/%d ..." % (bi, n_batches),
+                  end="\r", file=sys.stderr)
+        try:
+            data = oa_get("works", {
+                "filter": "ids.openalex:" + "|".join(chunk),
+                "per-page": 50,
+                "select": select,
+            }, email)
+        except Exception as e:                             # noqa: keep crawl alive
+            failed += 1
+            print("\n    [warn] batch %d failed, skipping (%s)" % (bi, e),
+                  file=sys.stderr)
+            continue
         for w in data.get("results", []):
             rec = {
                 "id": w.get("id"),
@@ -242,6 +273,10 @@ def fetch_works_meta(ref_ids, email, include_refs=False):
             if include_refs:
                 rec["referenced_works"] = w.get("referenced_works", []) or []
             out.append(rec)
+    if n_batches > 5:
+        print("    fetched %d/%d batches%s          "
+              % (n_batches - failed, n_batches,
+                 " (%d skipped)" % failed if failed else ""), file=sys.stderr)
     return out
 
 
