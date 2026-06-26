@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 retraction_risk.py  --  v1
 
@@ -105,7 +105,7 @@ DEFAULT_SEVERITY = 0.40
 # Below this (honest error, authorship, duplication) is density-normalized.
 SEVERE_TIER = 2
 
-# Display bands for FinalRisk. PROVISIONAL — re-derive from validation data.
+# Display bands for FinalRisk. PROVISIONAL â€” re-derive from validation data.
 # Calibrated so ONE load-bearing fabrication (Tier 3) lands in HIGH on its own,
 # and ONE manipulation (Tier 2) lands at least MODERATE.
 RISK_BANDS = [(1.2, "HIGH"), (0.5, "MODERATE"), (0.0, "LOW")]
@@ -253,7 +253,7 @@ def fetch_reference_meta(ref_ids, email):
 # ==========================================================================
 # depth-2 propagation
 # ==========================================================================
-DEPTH_DECAY = 0.35   # per-hop risk multiplier. PROVISIONAL — tune on validation.
+DEPTH_DECAY = 0.35   # per-hop risk multiplier. PROVISIONAL â€” tune on validation.
 
 
 def collect_depth2_targets(depth1_refs):
@@ -324,7 +324,7 @@ def estimate_reliance(_ref, full_text_ctx=None):
     """
     v1: we do NOT have in-text citation context from OpenAlex, so we cannot
     tell load-bearing from incidental. Default to 1.0 (treat as fully relied
-    upon) — conservative: it can only OVER-state risk, never hide it.
+    upon) â€” conservative: it can only OVER-state risk, never hide it.
 
     v2 plan: fetch JATS XML (Europe PMC OA), locate <xref ref-type="bibr">
     for this reference, read its section + co-citation density, and grade:
@@ -419,33 +419,33 @@ def print_ledger(title, doi, result, depth2=None):
         return
     if result["hits"]:
         if result["n_severe"]:
-            print("⚠ EGREGIOUS (depth 1): cites %d retraction(s) for misconduct."
+            print("âš  EGREGIOUS (depth 1): cites %d retraction(s) for misconduct."
                   % result["n_severe"])
             print("-" * 74)
-        print("DEPTH 1 — directly cited retractions:")
+        print("DEPTH 1 â€” directly cited retractions:")
         for h in result["hits"]:
             _print_hit(h)
     else:
-        print("DEPTH 1 — no directly cited retractions.")
+        print("DEPTH 1 â€” no directly cited retractions.")
 
     # ---- depth-2 ledger with PATH attribution ----
     if depth2 is not None and depth2["hits"]:
         print("")
         print("-" * 74)
-        print("DEPTH 2 — retractions reached THROUGH your references (decayed):")
+        print("DEPTH 2 â€” retractions reached THROUGH your references (decayed):")
         for h in depth2["hits"]:
             _print_hit(h, decayed=True)
             for p in h["via"][:3]:
-                print("        ↳ enters via your ref: [%s] %s"
+                print("        â†³ enters via your ref: [%s] %s"
                       % (p.get("doi") or "?", _trunc(p.get("title"), 50)))
             if len(h["via"]) > 3:
-                print("        ↳ ...and %d more of your refs cite it"
+                print("        â†³ ...and %d more of your refs cite it"
                       % (len(h["via"]) - 3))
 
     print("")
     print("-" * 74)
     print("NOTE: risk = attention flag, not a verdict. reliance is a v1 default")
-    print("(1.0), so neither depth can yet tell load-bearing from incidental —")
+    print("(1.0), so neither depth can yet tell load-bearing from incidental â€”")
     print("both score full. Depth-2 findings are EXPLORATORY: the entry attribution")
     print("(which ref a retraction enters through) is reliable, but the decayed")
     print("risk weight is provisional until the reliance module lands.")
@@ -455,9 +455,9 @@ def _print_hit(h, decayed=False):
     ref = h["ref"]
     yr = ref.get("year") or "????"
     rd = h["ret_date"].isoformat() if h["ret_date"] else "date?"
-    tag = "  «MISCONDUCT»" if h["severe"] else "  (minor)"
+    tag = "  Â«MISCONDUCTÂ»" if h["severe"] else "  (minor)"
     print("")
-    print("  • [%s, %s]  %s%s" % (yr, ref["doi"], _trunc(ref["title"], 50), tag))
+    print("  â€¢ [%s, %s]  %s%s" % (yr, ref["doi"], _trunc(ref["title"], 50), tag))
     print("      retracted %s  |  reason: %s" % (rd, h["reason"] or "(none)"))
     print("      tier %d (sev %.2f, '%s')  x  reliance %.2f  x  staleness %.2f"
           % (h["tier"], h["severity"], h["matched"], h["reliance"], h["staleness"]))
@@ -470,18 +470,18 @@ def _print_hit(h, decayed=False):
 
 def _trunc(s, n):
     s = s or ""
-    return s if len(s) <= n else s[:n - 1] + "…"
+    return s if len(s) <= n else s[:n - 1] + "â€¦"
 
 
 # ==========================================================================
-# demo data (no network) — proves scoring + ledger end to end
+# demo data (no network) â€” proves scoring + ledger end to end
 # ==========================================================================
 def demo(depth=1):
     today = date(2026, 6, 26)
     # depth-1 refs; two of them (R_a, R_b) themselves cite a depth-2 retraction
     references = [
         {"id": "https://openalex.org/Wa", "doi": "10.1/fabricated",
-         "title": "核 A miracle assay protocol", "year": 2016, "referenced_works": []},
+         "title": "æ ¸ A miracle assay protocol", "year": 2016, "referenced_works": []},
         {"id": "https://openalex.org/Wb", "doi": "10.2/authordispute",
          "title": "Useful background review", "year": 2018,
          "referenced_works": ["https://openalex.org/Wdeep1"]},
@@ -527,7 +527,7 @@ def demo(depth=1):
         depth2["n_nodes"] = 2
         depth2["truncated"] = False
 
-    print_ledger("DEMO — paper citing 4 retractions directly + 1 two hops down",
+    print_ledger("DEMO â€” paper citing 4 retractions directly + 1 two hops down",
                  "10.0/demo", result, depth2=depth2)
 
 
@@ -542,7 +542,7 @@ def main():
     ap.add_argument("--depth", type=int, default=1, choices=[1, 2],
                     help="1 = direct citations only (fast). 2 = also walk one hop "
                          "deeper to find retractions reached THROUGH your refs.")
-    ap.add_argument("--max-nodes", type=int, default=2000,
+    ap.add_argument("--max-nodes", type=int, default=5000,
                     help="Cap on depth-2 nodes examined (controls API load).")
     ap.add_argument("--demo", action="store_true", help="Built-in mock data, no network")
     args = ap.parse_args()
@@ -580,3 +580,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
