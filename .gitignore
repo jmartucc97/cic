@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+# Retraction Watch dump is large + redistributed under its own terms — don't commit it
+retractions.csv
+*.csv
+!labels.example.csv
+.DS_Store
