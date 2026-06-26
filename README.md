@@ -1,4 +1,4 @@
-# retraction-risk
+# CIC — Citation Integrity Checker
 
 Score how much a scientific paper's foundations are at risk because it **cites retracted work** — and flag, loudly, when it relies on retractions for **misconduct** (fabrication, falsification, image/data manipulation).
 
@@ -51,8 +51,8 @@ A retraction's severity is its **worst** reason (retractions often carry several
 ## Install
 
 ```bash
-git clone https://github.com/<you>/retraction-risk.git
-cd retraction-risk
+git clone https://github.com/<you>/cic.git
+cd cic
 pip install -r requirements.txt
 ```
 
@@ -68,6 +68,14 @@ Download the Retraction Watch database (CSV) once — it's distributed free via 
 ```bash
 python retraction_risk.py 10.1234/example.doi --rw-csv retractions.csv --email you@example.com
 ```
+
+**Walk one hop deeper** — also find retractions reached *through* your references, with attribution of which reference each one enters through:
+
+```bash
+python retraction_risk.py 10.1234/example.doi --rw-csv retractions.csv --email you@example.com --depth 2
+```
+
+`--depth 2` is slower (many more API calls) and bounded by `--max-nodes` (default 2000). The default `--depth 1` checks direct citations only.
 
 **Try it with no network (synthetic data):**
 
@@ -110,8 +118,8 @@ python validate.py --demo     # metric stack on synthetic data, no network
 
 ## Roadmap
 
-- **v2 — reliance from full text.** Fetch JATS XML (Europe PMC OA), locate `<xref ref-type="bibr">` for each retracted reference, grade by section and co-citation density, then replace the heuristic with an LLM classifier that quotes the supporting sentence.
-- **Propagation / second-order contamination.** Trace risk through the citation graph: papers relying on papers that relied on retracted work.
+- **v2 — reliance from full text.** Fetch JATS XML (Europe PMC OA), locate `<xref ref-type="bibr">` for each retracted reference, grade by section and co-citation density, then replace the heuristic with an LLM classifier that quotes the supporting sentence. This is the prerequisite that makes both depth-1 and depth-2 risk weights meaningful (load-bearing vs incidental).
+- **Depth-2 propagation** ✅ implemented (`--depth 2`): finds retractions reached through your references and attributes the entry point. Future: extend decay/dedup to depth 3 with a strict node budget.
 - **Severity weighting from reason-code research**, staleness from presence/absence of a correction on the citing paper.
 
 ---

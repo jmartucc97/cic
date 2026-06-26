@@ -216,24 +216,105 @@ def fetch_work(doi, email):
     return data
 
 
-def fetch_reference_meta(ref_ids, email):
-    """ref_ids: list of OpenAlex IDs. Returns list of dicts {doi,title,year}."""
+def fetch_works_meta(ref_ids, email, include_refs=False):
+    """ref_ids: OpenAlex IDs. Returns dicts {id,doi,title,year[,referenced_works]}.
+    include_refs=True also pulls each work's OWN reference list (needed to walk
+    to depth 2)."""
     out = []
     short = [rid.rsplit("/", 1)[-1] for rid in ref_ids]
+    select = "id,doi,title,publication_year"
+    if include_refs:
+        select += ",referenced_works"
     for i in range(0, len(short), 50):                  # OpenAlex filter cap
         chunk = short[i:i + 50]
         data = oa_get("works", {
             "filter": "ids.openalex:" + "|".join(chunk),
             "per-page": 50,
-            "select": "id,doi,title,publication_year",
+            "select": select,
         }, email)
         for w in data.get("results", []):
-            out.append({
+            rec = {
+                "id": w.get("id"),
                 "doi": norm_doi(w.get("doi")),
                 "title": w.get("title") or "(untitled)",
                 "year": w.get("publication_year"),
-            })
+            }
+            if include_refs:
+                rec["referenced_works"] = w.get("referenced_works", []) or []
+            out.append(rec)
     return out
+
+
+# Back-compat alias (validate.py imports this name).
+def fetch_reference_meta(ref_ids, email):
+    return fetch_works_meta(ref_ids, email, include_refs=False)
+
+
+# ==========================================================================
+# depth-2 propagation
+# ==========================================================================
+DEPTH_DECAY = 0.35   # per-hop risk multiplier. PROVISIONAL — tune on validation.
+
+
+def collect_depth2_targets(depth1_refs):
+    """No network. Map each depth-2 OpenAlex id -> the depth-1 ref(s) that cite
+    it (the contamination PATH). Returns (parents_map, ordered_id_list)."""
+    parents = {}
+    for r in depth1_refs:
+        for d2 in r.get("referenced_works", []) or []:
+            parents.setdefault(d2, [])
+            if r not in parents[d2]:
+                parents[d2].append(r)
+    return parents, list(parents.keys())
+
+
+def score_depth2(d2_meta, parents, root_doi, depth1_dois, rw_index, today=None):
+    """No network. Given fetched depth-2 metadata, find retracted ones, attribute
+    the path, decay the risk. Excludes anything already seen at depth 0/1 so
+    each retraction is counted at its SHALLOWEST entry point only."""
+    hits = []
+    for w in d2_meta:
+        doi = w["doi"]
+        if not doi or doi == root_doi or doi in depth1_dois:
+            continue                       # min-depth: already counted shallower
+        rec = rw_index.get(doi)
+        if not rec:
+            continue
+        tier, sev, matched = classify_severity(rec["reason"])
+        rel = estimate_reliance(w)
+        stal = staleness_factor(rec["date"], today=today)
+        risk_raw = sev * rel * stal
+        hits.append({
+            "ref": w, "tier": tier, "severity": sev, "matched": matched,
+            "reliance": rel, "staleness": stal,
+            "risk_raw": risk_raw, "risk": risk_raw * DEPTH_DECAY,
+            "reason": rec["reason"], "ret_date": rec["date"],
+            "severe": tier >= SEVERE_TIER, "depth": 2,
+            "via": parents.get(w["id"], []),
+        })
+    hits.sort(key=lambda h: (h["severe"], h["risk"]), reverse=True)
+    parents_touched = {p["doi"] for h in hits for p in h["via"] if p.get("doi")}
+    return {
+        "hits": hits,
+        "component": sum(h["risk"] for h in hits),
+        "n_severe": sum(1 for h in hits if h["severe"]),
+        "n_parents_touched": len(parents_touched),
+    }
+
+
+def traverse_depth2(depth1_refs, root_doi, rw_index, email, max_nodes, today=None):
+    """Orchestrates: collect depth-2 ids -> fetch (capped) -> score."""
+    parents, d2_ids = collect_depth2_targets(depth1_refs)
+    truncated = len(d2_ids) > max_nodes
+    d2_ids = d2_ids[:max_nodes]
+    print("  depth-2: %d unique nodes to examine%s ..."
+          % (len(d2_ids), " (capped)" if truncated else ""), file=sys.stderr)
+    d2_meta = fetch_works_meta(d2_ids, email, include_refs=False) if d2_ids else []
+    depth1_dois = {r["doi"] for r in depth1_refs if r["doi"]}
+    res = score_depth2(d2_meta, parents, root_doi, depth1_dois, rw_index, today=today)
+    res["n_nodes"] = len(d2_ids)
+    res["truncated"] = truncated
+    return res
 
 
 # ==========================================================================
@@ -303,7 +384,7 @@ def score_paper(references, rw_index, today=None):
 # ==========================================================================
 # output
 # ==========================================================================
-def print_ledger(title, doi, result):
+def print_ledger(title, doi, result, depth2=None):
     n = result["n_refs"]
     final = result["final"]
     print("=" * 74)
@@ -314,32 +395,77 @@ def print_ledger(title, doi, result):
     print("-" * 74)
     print("  misconduct component (undiluted):  %.3f" % result["severe_sum"])
     print("  minor component (/sqrt(%d)):        %.3f" % (n, result["minor_component"]))
-    print("  FinalRisk:  %.3f   [%s]" % (final, band(final)))
-    print("=" * 74)
-    if not result["hits"]:
-        print("No retracted references found. (Clean on this check.)")
-        return
-    if result["n_severe"]:
-        print("⚠ EGREGIOUS: cites %d retraction(s) for misconduct (fabrication/"
-              "manipulation). Each counts at full weight." % result["n_severe"])
+    print("  depth-1 FinalRisk:  %.3f   [%s]" % (final, band(final)))
+
+    # ---- entry profile (where does contamination enter the citation tree?) ----
+    if depth2 is not None:
+        d2 = depth2
+        combined = final + d2["component"]
         print("-" * 74)
-    for h in result["hits"]:
-        ref = h["ref"]
-        yr = ref.get("year") or "????"
-        rd = h["ret_date"].isoformat() if h["ret_date"] else "date?"
-        tag = "  «MISCONDUCT, undiluted»" if h["severe"] else "  (minor, normalized)"
+        print("CONTAMINATION ENTRY PROFILE (where retracted work enters):")
+        print("  depth 1 (cited directly):     %d retracted  (%d misconduct)"
+              % (len(result["hits"]), result["n_severe"]))
+        print("  depth 2 (via your sources):   %d retracted  (%d misconduct), "
+              "reached through %d of your direct refs%s"
+              % (len(d2["hits"]), d2["n_severe"], d2["n_parents_touched"],
+                 "  [search capped]" if d2.get("truncated") else ""))
+        print("  depth-2 risk (decayed x%.2f):  %.3f" % (DEPTH_DECAY, d2["component"]))
+        print("  COMBINED RISK:  %.3f   [%s]" % (combined, band(combined)))
+    print("=" * 74)
+
+    # ---- depth-1 ledger ----
+    if not result["hits"] and (depth2 is None or not depth2["hits"]):
+        print("No retracted references found at any examined depth. (Clean.)")
+        return
+    if result["hits"]:
+        if result["n_severe"]:
+            print("⚠ EGREGIOUS (depth 1): cites %d retraction(s) for misconduct."
+                  % result["n_severe"])
+            print("-" * 74)
+        print("DEPTH 1 — directly cited retractions:")
+        for h in result["hits"]:
+            _print_hit(h)
+    else:
+        print("DEPTH 1 — no directly cited retractions.")
+
+    # ---- depth-2 ledger with PATH attribution ----
+    if depth2 is not None and depth2["hits"]:
         print("")
-        print("  • [%s, %s]  %s%s" % (yr, ref["doi"], _trunc(ref["title"], 52), tag))
-        print("      retracted %s  |  reason: %s" % (rd, h["reason"] or "(none)"))
-        print("      tier %d (sev %.2f, matched '%s')  x  reliance %.2f  x  staleness %.2f"
-              % (h["tier"], h["severity"], h["matched"], h["reliance"], h["staleness"]))
-        print("      => risk contribution %.3f" % h["risk"])
+        print("-" * 74)
+        print("DEPTH 2 — retractions reached THROUGH your references (decayed):")
+        for h in depth2["hits"]:
+            _print_hit(h, decayed=True)
+            for p in h["via"][:3]:
+                print("        ↳ enters via your ref: [%s] %s"
+                      % (p.get("doi") or "?", _trunc(p.get("title"), 50)))
+            if len(h["via"]) > 3:
+                print("        ↳ ...and %d more of your refs cite it"
+                      % (len(h["via"]) - 3))
+
     print("")
     print("-" * 74)
     print("NOTE: risk = attention flag, not a verdict. reliance is a v1 default")
-    print("(1.0), so v1 cannot yet tell a load-bearing misconduct cite from a")
-    print("passing mention — both score full. That errs toward flagging; v2")
-    print("reliance (full-text context) is what relaxes the incidental case.")
+    print("(1.0), so neither depth can yet tell load-bearing from incidental —")
+    print("both score full. Depth-2 findings are EXPLORATORY: the entry attribution")
+    print("(which ref a retraction enters through) is reliable, but the decayed")
+    print("risk weight is provisional until the reliance module lands.")
+
+
+def _print_hit(h, decayed=False):
+    ref = h["ref"]
+    yr = ref.get("year") or "????"
+    rd = h["ret_date"].isoformat() if h["ret_date"] else "date?"
+    tag = "  «MISCONDUCT»" if h["severe"] else "  (minor)"
+    print("")
+    print("  • [%s, %s]  %s%s" % (yr, ref["doi"], _trunc(ref["title"], 50), tag))
+    print("      retracted %s  |  reason: %s" % (rd, h["reason"] or "(none)"))
+    print("      tier %d (sev %.2f, '%s')  x  reliance %.2f  x  staleness %.2f"
+          % (h["tier"], h["severity"], h["matched"], h["reliance"], h["staleness"]))
+    if decayed:
+        print("      => raw %.3f  x decay %.2f  => contribution %.3f"
+              % (h["risk_raw"], DEPTH_DECAY, h["risk"]))
+    else:
+        print("      => risk contribution %.3f" % h["risk"])
 
 
 def _trunc(s, n):
@@ -350,15 +476,25 @@ def _trunc(s, n):
 # ==========================================================================
 # demo data (no network) — proves scoring + ledger end to end
 # ==========================================================================
-def demo():
+def demo(depth=1):
     today = date(2026, 6, 26)
+    # depth-1 refs; two of them (R_a, R_b) themselves cite a depth-2 retraction
     references = [
-        {"doi": "10.1/fabricated", "title": "核 A miracle assay protocol", "year": 2016},
-        {"doi": "10.2/authordispute", "title": "Useful background review", "year": 2018},
-        {"doi": "10.3/notreproducible", "title": "Prior finding we build on", "year": 2017},
-        {"doi": "10.4/clean", "title": "A perfectly fine paper", "year": 2020},
-        {"doi": "10.5/imagemanip", "title": "Recently retracted blots", "year": 2022},
-    ] + [{"doi": "10.9/ok%d" % i, "title": "filler ref %d" % i, "year": 2019} for i in range(45)]
+        {"id": "https://openalex.org/Wa", "doi": "10.1/fabricated",
+         "title": "核 A miracle assay protocol", "year": 2016, "referenced_works": []},
+        {"id": "https://openalex.org/Wb", "doi": "10.2/authordispute",
+         "title": "Useful background review", "year": 2018,
+         "referenced_works": ["https://openalex.org/Wdeep1"]},
+        {"id": "https://openalex.org/Wc", "doi": "10.3/notreproducible",
+         "title": "Prior finding we build on", "year": 2017, "referenced_works": []},
+        {"id": "https://openalex.org/Wd", "doi": "10.4/clean",
+         "title": "A perfectly fine paper", "year": 2020,
+         "referenced_works": ["https://openalex.org/Wdeep1", "https://openalex.org/Wok"]},
+        {"id": "https://openalex.org/We", "doi": "10.5/imagemanip",
+         "title": "Recently retracted blots", "year": 2022, "referenced_works": []},
+    ] + [{"id": "https://openalex.org/Wf%d" % i, "doi": "10.9/ok%d" % i,
+          "title": "filler ref %d" % i, "year": 2019, "referenced_works": []}
+         for i in range(45)]
 
     rw_index = {
         "10.1/fabricated": {"date": date(2021, 1, 1),
@@ -369,25 +505,50 @@ def demo():
                                  "reason": "+Results Not Reproducible;+Concerns About Data"},
         "10.5/imagemanip": {"date": date(2026, 3, 1),
                             "reason": "+Manipulation of Images"},
+        # depth-2: a fabricated paper reached only THROUGH two clean-looking refs
+        "10.7/deepfraud": {"date": date(2020, 1, 1),
+                           "reason": "+Falsification/Fabrication of Data"},
     }
     result = score_paper(references, rw_index, today=today)
-    print_ledger("DEMO — synthetic paper citing 4 retracted works (of 50 refs)",
-                 "10.0/demo", result)
+
+    depth2 = None
+    if depth >= 2:
+        # simulate the fetch of depth-2 nodes (no network in demo)
+        d2_meta = [
+            {"id": "https://openalex.org/Wdeep1", "doi": "10.7/deepfraud",
+             "title": "The fabricated foundation everyone trusted", "year": 2015},
+            {"id": "https://openalex.org/Wok", "doi": "10.8/fine",
+             "title": "A clean deep reference", "year": 2014},
+        ]
+        parents, _ = collect_depth2_targets(references)
+        depth1_dois = {r["doi"] for r in references if r["doi"]}
+        depth2 = score_depth2(d2_meta, parents, "10.0/demo", depth1_dois,
+                              rw_index, today=today)
+        depth2["n_nodes"] = 2
+        depth2["truncated"] = False
+
+    print_ledger("DEMO — paper citing 4 retractions directly + 1 two hops down",
+                 "10.0/demo", result, depth2=depth2)
 
 
 # ==========================================================================
 # main
 # ==========================================================================
 def main():
-    ap = argparse.ArgumentParser(description="Retraction-citation risk scorer (v1)")
+    ap = argparse.ArgumentParser(description="Retraction-citation risk scorer")
     ap.add_argument("doi", nargs="?", help="DOI of the paper to score")
     ap.add_argument("--rw-csv", help="Path to Retraction Watch CSV dump")
     ap.add_argument("--email", help="Your email (OpenAlex polite pool)")
-    ap.add_argument("--demo", action="store_true", help="Run on built-in mock data, no network")
+    ap.add_argument("--depth", type=int, default=1, choices=[1, 2],
+                    help="1 = direct citations only (fast). 2 = also walk one hop "
+                         "deeper to find retractions reached THROUGH your refs.")
+    ap.add_argument("--max-nodes", type=int, default=2000,
+                    help="Cap on depth-2 nodes examined (controls API load).")
+    ap.add_argument("--demo", action="store_true", help="Built-in mock data, no network")
     args = ap.parse_args()
 
     if args.demo:
-        demo()
+        demo(depth=args.depth)
         return
 
     if not args.doi or not args.rw_csv:
@@ -404,9 +565,17 @@ def main():
     title = work.get("title")
     print("  %d references found. Resolving DOIs ..." % len(ref_ids), file=sys.stderr)
 
-    references = fetch_reference_meta(ref_ids, args.email) if ref_ids else []
+    need_refs = args.depth >= 2
+    references = (fetch_works_meta(ref_ids, args.email, include_refs=need_refs)
+                 if ref_ids else [])
     result = score_paper(references, rw_index)
-    print_ledger(title, doi, result)
+
+    depth2 = None
+    if args.depth >= 2 and references:
+        depth2 = traverse_depth2(references, doi, rw_index, args.email,
+                                 args.max_nodes)
+
+    print_ledger(title, doi, result, depth2=depth2)
 
 
 if __name__ == "__main__":
