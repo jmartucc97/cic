@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 retraction_risk.py  --  v1
 
@@ -105,7 +105,7 @@ DEFAULT_SEVERITY = 0.40
 # Below this (honest error, authorship, duplication) is density-normalized.
 SEVERE_TIER = 2
 
-# Display bands for FinalRisk. PROVISIONAL â€” re-derive from validation data.
+# Display bands for FinalRisk. PROVISIONAL — re-derive from validation data.
 # Calibrated so ONE load-bearing fabrication (Tier 3) lands in HIGH on its own,
 # and ONE manipulation (Tier 2) lands at least MODERATE.
 RISK_BANDS = [(1.2, "HIGH"), (0.5, "MODERATE"), (0.0, "LOW")]
@@ -253,7 +253,7 @@ def fetch_reference_meta(ref_ids, email):
 # ==========================================================================
 # depth-2 propagation
 # ==========================================================================
-DEPTH_DECAY = 0.35   # per-hop risk multiplier. PROVISIONAL â€” tune on validation.
+DEPTH_DECAY = 0.35   # per-hop risk multiplier. PROVISIONAL — tune on validation.
 
 
 def collect_depth2_targets(depth1_refs):
@@ -324,7 +324,7 @@ def estimate_reliance(_ref, full_text_ctx=None):
     """
     v1: we do NOT have in-text citation context from OpenAlex, so we cannot
     tell load-bearing from incidental. Default to 1.0 (treat as fully relied
-    upon) â€” conservative: it can only OVER-state risk, never hide it.
+    upon) — conservative: it can only OVER-state risk, never hide it.
 
     v2 plan: fetch JATS XML (Europe PMC OA), locate <xref ref-type="bibr">
     for this reference, read its section + co-citation density, and grade:
@@ -384,104 +384,198 @@ def score_paper(references, rw_index, today=None):
 # ==========================================================================
 # output
 # ==========================================================================
+# Plain-language translation of Retraction Watch reason strings (which are raw,
+# semicolon-delimited, and repetitive). Ordered most-serious-first; first match
+# wins so the headline reflects the worst reason.
+_REASON_LABELS = [
+    ("fabrication", "Data/results fabrication"),
+    ("falsification", "Data falsification"),
+    ("manipulation of image", "Image manipulation"),
+    ("manipulation of data", "Data manipulation"),
+    ("manipulation of results", "Results manipulation"),
+    ("fake peer review", "Fake peer review"),
+    ("paper mill", "Paper mill"),
+    ("plagiarism", "Plagiarism"),
+    ("results not reproducible", "Results not reproducible"),
+    ("unreliable", "Unreliable results"),
+    ("error in data", "Error in data"),
+    ("error in analyses", "Error in analysis"),
+    ("error in results", "Error in results"),
+    ("concerns about data", "Concerns about data"),
+    ("concerns/issues about data", "Concerns about data"),
+    ("duplication", "Duplicate publication"),
+    ("authorship", "Authorship dispute"),
+    ("copyright", "Copyright/legal issue"),
+    ("legal", "Copyright/legal issue"),
+    ("ethical", "Ethics/approval issue"),
+    ("lack of irb", "Ethics/approval issue"),
+    ("plagiarism of image", "Image plagiarism"),
+]
+
+
+def plain_reason(reason_str):
+    """One clean human-readable label for the worst reason, + investigation note."""
+    if not reason_str:
+        return "Reason not specified"
+    text = reason_str.lower()
+    label = None
+    for needle, pretty in _REASON_LABELS:
+        if needle in text:
+            label = pretty
+            break
+    if label is None:
+        label = "Retracted (see record)"
+    if "investigation" in text:
+        label += " (under investigation)"
+    return label
+
+
+def severity_label(tier):
+    return {3: "Fabrication", 2: "Misconduct",
+            1: "Reliability concern", 0: "Administrative"}.get(tier, "Unknown")
+
+
+def _verdict_summary(result, depth2):
+    """One plain-English sentence describing the finding."""
+    d1 = len(result["hits"])
+    d2 = len(depth2["hits"]) if depth2 else 0
+    if d1 == 0 and d2 == 0:
+        return "Clean — no retracted work found among direct citations" + \
+               (" or one level deeper." if depth2 is not None else ".")
+    parts = []
+    if d1:
+        misc = result["n_severe"]
+        s = "cites %d retracted paper%s directly" % (d1, "" if d1 == 1 else "s")
+        if misc:
+            s += " (%d for misconduct)" % misc
+        parts.append(s)
+    if d2:
+        through = depth2["n_parents_touched"]
+        s = ("reaches %d retracted paper%s through %d of its own reference%s"
+             % (d2, "" if d2 == 1 else "s", through, "" if through == 1 else "s"))
+        parts.append(s)
+    if d1 == 0 and d2:
+        return "Clean on direct citations, but " + parts[0] + "."
+    return "This paper " + " and ".join(parts) + "."
 def print_ledger(title, doi, result, depth2=None):
     n = result["n_refs"]
     final = result["final"]
-    print("=" * 74)
-    print("PAPER:  %s" % (title or "(unknown title)"))
-    print("DOI:    %s" % doi)
-    print("Refs:   %d   |   Retracted refs: %d   |   of which misconduct-tier: %d"
-          % (n, len(result["hits"]), result["n_severe"]))
-    print("-" * 74)
-    print("  misconduct component (undiluted):  %.3f" % result["severe_sum"])
-    print("  minor component (/sqrt(%d)):        %.3f" % (n, result["minor_component"]))
-    print("  depth-1 FinalRisk:  %.3f   [%s]" % (final, band(final)))
+    combined = final + (depth2["component"] if depth2 else 0.0)
+    any_misconduct = result["n_severe"] + (depth2["n_severe"] if depth2 else 0)
 
-    # ---- entry profile (where does contamination enter the citation tree?) ----
-    if depth2 is not None:
-        d2 = depth2
-        combined = final + d2["component"]
-        print("-" * 74)
-        print("CONTAMINATION ENTRY PROFILE (where retracted work enters):")
-        print("  depth 1 (cited directly):     %d retracted  (%d misconduct)"
-              % (len(result["hits"]), result["n_severe"]))
-        print("  depth 2 (via your sources):   %d retracted  (%d misconduct), "
-              "reached through %d of your direct refs%s"
-              % (len(d2["hits"]), d2["n_severe"], d2["n_parents_touched"],
-                 "  [search capped]" if d2.get("truncated") else ""))
-        print("  depth-2 risk (decayed x%.2f):  %.3f" % (DEPTH_DECAY, d2["component"]))
-        print("  COMBINED RISK:  %.3f   [%s]" % (combined, band(combined)))
+    # ---------------- TIER 1: VERDICT ----------------
+    print("=" * 74)
+    print("  CITATION INTEGRITY CHECK")
+    print("=" * 74)
+    print("  %s" % _trunc(title or "(unknown title)", 68))
+    print("  %s  ·  %d references" % (doi, n))
+    print("")
+    print("  RISK SCORE:  %s  (%.3f)" % (band(combined), combined))
+    if any_misconduct:
+        print("  \u2691 FLAG: reaches misconduct-tier retracted work"
+              "%s" % ("" if result["n_severe"] else " (indirectly)"))
+    print("  %s" % _wrap(_verdict_summary(result, depth2), 70, "  "))
     print("=" * 74)
 
-    # ---- depth-1 ledger ----
     if not result["hits"] and (depth2 is None or not depth2["hits"]):
-        print("No retracted references found at any examined depth. (Clean.)")
+        print("  No retracted references found at any examined depth.")
         return
+
+    # ---------------- TIER 2: FINDINGS ----------------
+    print("  FINDINGS")
+    print("-" * 74)
     if result["hits"]:
-        if result["n_severe"]:
-            print("âš  EGREGIOUS (depth 1): cites %d retraction(s) for misconduct."
-                  % result["n_severe"])
-            print("-" * 74)
-        print("DEPTH 1 â€” directly cited retractions:")
         for h in result["hits"]:
-            _print_hit(h)
+            _finding_card(h, kind="DIRECT")
     else:
-        print("DEPTH 1 â€” no directly cited retractions.")
-
-    # ---- depth-2 ledger with PATH attribution ----
-    if depth2 is not None and depth2["hits"]:
+        print("  (no directly-cited retractions)")
+    if depth2 and depth2["hits"]:
         print("")
-        print("-" * 74)
-        print("DEPTH 2 â€” retractions reached THROUGH your references (decayed):")
         for h in depth2["hits"]:
-            _print_hit(h, decayed=True)
-            for p in h["via"][:3]:
-                print("        â†³ enters via your ref: [%s] %s"
-                      % (p.get("doi") or "?", _trunc(p.get("title"), 50)))
-            if len(h["via"]) > 3:
-                print("        â†³ ...and %d more of your refs cite it"
-                      % (len(h["via"]) - 3))
+            _finding_card(h, kind="INHERITED")
 
+    # ---------------- TIER 3: AUDIT ----------------
     print("")
     print("-" * 74)
-    print("NOTE: risk = attention flag, not a verdict. reliance is a v1 default")
-    print("(1.0), so neither depth can yet tell load-bearing from incidental â€”")
-    print("both score full. Depth-2 findings are EXPLORATORY: the entry attribution")
-    print("(which ref a retraction enters through) is reliable, but the decayed")
-    print("risk weight is provisional until the reliance module lands.")
+    print("  SCORING DETAIL (audit)")
+    print("-" * 74)
+    print("  depth-1 risk: %.3f   depth-2 risk (x%.2f decay): %.3f   combined: %.3f"
+          % (final, DEPTH_DECAY, depth2["component"] if depth2 else 0.0, combined))
+    for h in result["hits"]:
+        _audit_line(h)
+    if depth2:
+        for h in depth2["hits"]:
+            _audit_line(h, decayed=True)
+    print("")
+    print("  reliance defaults to 1.0 (load-bearing vs incidental not yet")
+    print("  distinguished). Risk = attention flag, not a verdict.")
+    print("=" * 74)
 
 
-def _print_hit(h, decayed=False):
+def _finding_card(h, kind):
+    """Tier-2: human-readable finding, no math."""
     ref = h["ref"]
     yr = ref.get("year") or "????"
-    rd = h["ret_date"].isoformat() if h["ret_date"] else "date?"
-    tag = "  Â«MISCONDUCTÂ»" if h["severe"] else "  (minor)"
-    print("")
-    print("  â€¢ [%s, %s]  %s%s" % (yr, ref["doi"], _trunc(ref["title"], 50), tag))
-    print("      retracted %s  |  reason: %s" % (rd, h["reason"] or "(none)"))
-    print("      tier %d (sev %.2f, '%s')  x  reliance %.2f  x  staleness %.2f"
-          % (h["tier"], h["severity"], h["matched"], h["reliance"], h["staleness"]))
-    if decayed:
-        print("      => raw %.3f  x decay %.2f  => contribution %.3f"
-              % (h["risk_raw"], DEPTH_DECAY, h["risk"]))
+    rd = h["ret_date"].isoformat() if h["ret_date"] else "date unknown"
+    if kind == "DIRECT":
+        header = "\u25cf DIRECT CITATION \u2014 %s" % severity_label(h["tier"])
     else:
-        print("      => risk contribution %.3f" % h["risk"])
+        header = "\u25cf INHERITED (2 hops) \u2014 %s" % severity_label(h["tier"])
+    print("  %s" % header)
+    print("    RETRACTED: %s" % _trunc(ref["title"], 58))
+    print("    Why:  %s" % plain_reason(h["reason"]))
+    print("    Retracted: %s  ·  published %s" % (rd, yr))
+    if kind == "INHERITED" and h.get("via"):
+        via = h["via"]
+        print("    Reaches this paper through %d of its references, including:"
+              % len(via))
+        for p in via[:3]:
+            print("        \u2022 %s" % _trunc(p.get("title"), 56))
+        if len(via) > 3:
+            print("        \u2022 ...and %d more" % (len(via) - 3))
+    print("")
+
+
+def _audit_line(h, decayed=False):
+    ref = h["ref"]
+    base = ("    %s [%s]: tier %d  sev %.2f x rel %.2f x stale %.2f = %.3f"
+            % (_trunc(ref["title"], 34), ref["doi"], h["tier"], h["severity"],
+               h["reliance"], h["staleness"],
+               h["risk_raw"] if decayed else h["risk"]))
+    if decayed:
+        base += " raw -> %.3f decayed" % h["risk"]
+    print(base)
+    print("        raw reason: %s" % _trunc(h["reason"], 60))
+
+
+def _wrap(text, width, indent):
+    """Cheap word-wrap for the summary line."""
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 > width:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = (cur + " " + w).strip()
+    if cur:
+        lines.append(cur)
+    return ("\n" + indent).join(lines)
 
 
 def _trunc(s, n):
     s = s or ""
-    return s if len(s) <= n else s[:n - 1] + "â€¦"
+    return s if len(s) <= n else s[:n - 1] + "…"
 
 
 # ==========================================================================
-# demo data (no network) â€” proves scoring + ledger end to end
+# demo data (no network) — proves scoring + ledger end to end
 # ==========================================================================
 def demo(depth=1):
     today = date(2026, 6, 26)
     # depth-1 refs; two of them (R_a, R_b) themselves cite a depth-2 retraction
     references = [
         {"id": "https://openalex.org/Wa", "doi": "10.1/fabricated",
-         "title": "æ ¸ A miracle assay protocol", "year": 2016, "referenced_works": []},
+         "title": "核 A miracle assay protocol", "year": 2016, "referenced_works": []},
         {"id": "https://openalex.org/Wb", "doi": "10.2/authordispute",
          "title": "Useful background review", "year": 2018,
          "referenced_works": ["https://openalex.org/Wdeep1"]},
@@ -527,7 +621,7 @@ def demo(depth=1):
         depth2["n_nodes"] = 2
         depth2["truncated"] = False
 
-    print_ledger("DEMO â€” paper citing 4 retractions directly + 1 two hops down",
+    print_ledger("DEMO — paper citing 4 retractions directly + 1 two hops down",
                  "10.0/demo", result, depth2=depth2)
 
 
@@ -580,4 +674,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
