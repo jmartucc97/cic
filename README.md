@@ -4,6 +4,8 @@ Score how much a scientific paper's foundations are at risk because it **cites r
 
 This is a research prototype. It produces an **attention flag with an itemized evidence ledger**, not a verdict. A paper citing a retracted study is not automatically wrong, and the tool is built to say so.
 
+**▶ [Interactive demo](https://jmartucc97.github.io/cic/)** — walk the scoring model on bundled sample papers, no install required.
+
 ---
 
 ## What it does
@@ -123,6 +125,12 @@ python validate.py --demo     # metric stack on synthetic data, no network
 - **Severity weighting from reason-code research**, staleness from presence/absence of a correction on the citing paper.
 
 ---
+
+## Web demo
+
+[`docs/index.html`](docs/index.html) is a self-contained interactive walkthrough of the scoring model — the severity ladder, the `severity × reliance × staleness` factors, the misconduct-undiluted / minor-normalized split, the evidence ledger, and `--depth 2` propagation — running on the same bundled sample data as `--demo`. It's a single static file with no build step and no backend; it mirrors the CLI's output shape rather than calling the live APIs.
+
+Served free via **GitHub Pages** from the `/docs` folder. To publish it: **Settings → Pages → Build and deployment → Source: “Deploy from a branch” → Branch: `main`, folder `/docs`**. The live URL is then `https://jmartucc97.github.io/cic/`.
 
 ## License
 

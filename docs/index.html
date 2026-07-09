@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CIC — Citation Integrity Checker</title>
+<meta name="description" content="Score how much a scientific paper's foundations rest on retracted work — an attention flag with an itemized evidence ledger, not a verdict.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#EEF0ED; --paper-2:#F6F7F4; --ink:#16202B; --ink-soft:#42505C;
+    --hair:#D3D7D0; --hair-2:#C2C8BF;
+    --retract:#A62016; --retract-bg:#F6E3E0;
+    --caution:#9A6A12; --caution-bg:#F4E9D4;
+    --concern:#6B5E9A; --concern-bg:#EAE6F2;
+    --verified:#0E6E63; --verified-bg:#DCEBE8;
+    --slate:#5B6670;
+    --shadow:0 1px 0 rgba(22,32,43,.04), 0 12px 34px -18px rgba(22,32,43,.30);
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:"Inter",system-ui,sans-serif;
+    line-height:1.55;-webkit-font-smoothing:antialiased;}
+  .mono{font-family:"IBM Plex Mono",monospace;}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 28px;}
+
+  header.masthead{border-bottom:1.5px solid var(--ink);background:var(--paper);}
+  .mast-top{display:flex;align-items:baseline;justify-content:space-between;padding:20px 0 16px;gap:20px;flex-wrap:wrap;}
+  .wordmark{display:flex;align-items:center;gap:14px;}
+  .wordmark .glyph{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:15px;letter-spacing:.5px;
+    color:var(--paper-2);background:var(--ink);padding:7px 10px;border-radius:3px;line-height:1;}
+  .wordmark h1{font-family:"Newsreader",serif;font-weight:600;font-size:23px;margin:0;letter-spacing:-.01em;}
+  .wordmark .sub{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--slate);margin-top:3px;}
+  .mast-meta{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--slate);text-align:right;line-height:1.7;}
+  .mast-meta a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--hair-2);}
+  .mast-meta a:hover{border-color:var(--ink);}
+
+  .hero{padding:46px 0 30px;border-bottom:1px solid var(--hair);}
+  .hero .eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--retract);margin-bottom:16px;display:flex;align-items:center;gap:10px;}
+  .hero .eyebrow::before{content:"";width:26px;height:1.5px;background:var(--retract);display:inline-block;}
+  .hero h2{font-family:"Newsreader",serif;font-weight:500;font-size:clamp(30px,5vw,49px);line-height:1.06;
+    letter-spacing:-.02em;margin:0 0 18px;max-width:17ch;}
+  .hero h2 em{font-style:italic;color:var(--retract);}
+  .hero p.lede{font-size:16.5px;max-width:62ch;color:var(--ink-soft);margin:0 0 8px;}
+  .hero p.lede b{color:var(--ink);font-weight:600;}
+
+  .console{background:var(--paper-2);border:1px solid var(--hair-2);border-radius:8px;box-shadow:var(--shadow);
+    margin:34px 0 8px;overflow:hidden;}
+  .console-bar{display:flex;align-items:center;gap:8px;padding:11px 16px;border-bottom:1px solid var(--hair);
+    background:linear-gradient(180deg,#fff,var(--paper-2));}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--hair-2);}
+  .console-bar .label{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--slate);margin-left:6px;letter-spacing:.03em;}
+  .console-body{padding:22px 20px 24px;}
+  .field-row{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;}
+  .field{flex:1 1 340px;display:flex;align-items:center;background:#fff;border:1px solid var(--hair-2);border-radius:6px;padding:0 4px 0 14px;}
+  .field .pre{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--slate);padding-right:10px;
+    border-right:1px solid var(--hair);margin-right:10px;white-space:nowrap;}
+  .field input{border:0;outline:0;flex:1;font-family:"IBM Plex Mono",monospace;font-size:13.5px;color:var(--ink);
+    padding:13px 6px;background:transparent;min-width:0;}
+  button.run{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:13px;letter-spacing:.04em;
+    background:var(--ink);color:var(--paper-2);border:0;border-radius:6px;padding:0 22px;cursor:pointer;transition:.15s;white-space:nowrap;}
+  button.run:hover{background:#0c1620;}
+  button.run:disabled{opacity:.55;cursor:progress;}
+  .samples{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;align-items:center;}
+  .samples span.tag{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--slate);margin-right:2px;}
+  .chip{font-family:"IBM Plex Mono",monospace;font-size:12px;background:#fff;border:1px solid var(--hair-2);border-radius:20px;
+    padding:5px 13px;cursor:pointer;color:var(--ink-soft);transition:.15s;}
+  .chip:hover{border-color:var(--ink);color:var(--ink);}
+
+  #log{font-family:"IBM Plex Mono",monospace;font-size:12.5px;color:var(--ink-soft);margin-top:20px;display:none;
+    background:#fbfcfa;border:1px dashed var(--hair-2);border-radius:6px;padding:14px 16px;}
+  #log .ln{opacity:0;animation:fade .25s forwards;}
+  #log .ln .ok{color:var(--verified);} #log .ln .hit{color:var(--retract);}
+  @keyframes fade{to{opacity:1;}}
+
+  #results{display:none;}
+  .verdict{display:grid;grid-template-columns:auto 1fr;gap:30px;align-items:center;padding:30px 0 26px;border-bottom:1px solid var(--hair);}
+  @media(max-width:620px){.verdict{grid-template-columns:1fr;gap:18px;}}
+  .stamp{position:relative;width:176px;height:176px;display:grid;place-items:center;justify-self:center;}
+  .stamp svg{position:absolute;inset:0;}
+  .stamp .band{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:22px;letter-spacing:.06em;line-height:1;}
+  .stamp .val{font-family:"Newsreader",serif;font-weight:600;font-size:30px;line-height:1;margin-top:8px;}
+  .stamp .of{font-family:"IBM Plex Mono",monospace;font-size:9.5px;color:var(--slate);letter-spacing:.1em;margin-top:5px;}
+  .verdict-copy h3{font-family:"Newsreader",serif;font-weight:500;font-size:26px;margin:2px 0 8px;letter-spacing:-.01em;line-height:1.15;}
+  .verdict-copy p{margin:0;color:var(--ink-soft);font-size:15px;max-width:54ch;}
+  .verdict-copy .notverdict{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.05em;color:var(--slate);
+    margin-top:12px;display:inline-block;border:1px solid var(--hair-2);border-radius:4px;padding:5px 10px;}
+  .verdict-stats{display:flex;gap:26px;margin-top:16px;flex-wrap:wrap;}
+  .vstat .n{font-family:"Newsreader",serif;font-size:25px;font-weight:600;line-height:1;}
+  .vstat .k{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--slate);margin-top:5px;}
+
+  .sec{padding:34px 0;border-bottom:1px solid var(--hair);}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px;}
+  .sec-head .num{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--retract);letter-spacing:.1em;}
+  .sec-head h4{font-family:"Newsreader",serif;font-weight:500;font-size:22px;margin:0;letter-spacing:-.01em;}
+  .sec-head .note{font-size:13px;color:var(--slate);margin-left:auto;max-width:42ch;text-align:right;}
+  @media(max-width:640px){.sec-head .note{display:none;}}
+
+  .ladder{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+  @media(max-width:720px){.ladder{grid-template-columns:1fr 1fr;}}
+  .rung{border:1px solid var(--hair-2);border-radius:7px;padding:15px 15px 16px;background:var(--paper-2);}
+  .rung .code{font-family:"IBM Plex Mono",monospace;font-size:11px;font-weight:600;letter-spacing:.06em;padding:3px 8px;border-radius:3px;display:inline-block;}
+  .rung h5{font-family:"Inter";font-weight:600;font-size:14px;margin:11px 0 6px;}
+  .rung p{font-size:12px;color:var(--ink-soft);margin:0;line-height:1.5;}
+  .rung .wt{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--slate);margin-top:10px;}
+  .ladder-foot{display:flex;gap:18px;margin-top:16px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-soft);}
+  .ladder-foot span b{font-family:"IBM Plex Mono",monospace;font-weight:600;}
+  .ladder-foot .mis b{color:var(--retract);} .ladder-foot .min b{color:var(--verified);}
+
+  /* formula */
+  .formula{background:var(--ink);border-radius:9px;padding:26px 28px;color:var(--paper-2);}
+  .formula .eq{font-family:"IBM Plex Mono",monospace;font-size:15px;line-height:2.1;color:#EDEFEC;}
+  .formula .eq .sev{color:#E9B27A;} .formula .eq .rel{color:#9DC4BC;} .formula .eq .stal{color:#C9A6D4;}
+  .formula .eq .op{color:var(--slate);}
+  .formula .split{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:20px;}
+  @media(max-width:620px){.formula .split{grid-template-columns:1fr;}}
+  .formula .split .h{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;}
+  .formula .split .mis .h{color:#E7A06B;} .formula .split .min .h{color:#8FC0B6;}
+  .formula .split p{font-size:12.5px;color:#C7CEC9;margin:0;line-height:1.55;}
+
+  .ledger{border:1px solid var(--hair-2);border-radius:8px;overflow:hidden;background:var(--paper-2);}
+  .lrow{display:grid;grid-template-columns:26px 1fr 120px 78px;gap:14px;align-items:start;padding:15px 18px;border-bottom:1px solid var(--hair);}
+  .lrow:last-child{border-bottom:0;}
+  .lrow.head{background:#fff;font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;
+    color:var(--slate);padding:11px 18px;align-items:center;}
+  @media(max-width:680px){
+    .lrow{grid-template-columns:20px 1fr;gap:8px;}
+    .lrow .col-status,.lrow .col-risk,.lrow.head .col-status,.lrow.head .col-risk{display:none;}
+    .ref-mobile{display:flex!important;}
+  }
+  .lrow .idx{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--slate);padding-top:2px;}
+  .ref .title{font-size:13.5px;font-weight:500;line-height:1.4;}
+  .ref .doi{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--slate);margin-top:3px;}
+  .factors{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px;align-items:center;}
+  .fchip{font-family:"IBM Plex Mono",monospace;font-size:10.5px;padding:3px 7px;border-radius:4px;background:#fff;border:1px solid var(--hair);white-space:nowrap;}
+  .fchip .lbl{color:var(--slate);}
+  .fchip.sev{border-color:#E4C4A6;} .fchip.sev b{color:var(--caution);}
+  .fchip.rel b{color:var(--slate);} .fchip.stal b{color:var(--concern);}
+  .fx{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--slate);}
+  .stance{font-family:"IBM Plex Mono",monospace;font-size:10.5px;margin-top:8px;color:var(--slate);}
+  .stance b{font-weight:600;}
+  .stance.build b{color:var(--retract);} .stance.mention b{color:var(--caution);} .stance.dispute b{color:var(--verified);}
+  .status{font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;letter-spacing:.05em;padding:5px 9px;border-radius:4px;text-align:center;white-space:nowrap;display:inline-block;}
+  .risk{font-family:"IBM Plex Mono",monospace;font-size:14px;text-align:right;padding-top:2px;}
+  .risk.pos{color:var(--retract);} .risk.zero{color:var(--slate);}
+  .risk .sub{display:block;font-size:9px;letter-spacing:.04em;color:var(--slate);margin-top:3px;}
+  .ref-mobile{display:none;margin-top:10px;gap:10px;align-items:center;}
+
+  .prop{display:grid;grid-template-columns:1fr 300px;gap:30px;align-items:center;}
+  @media(max-width:760px){.prop{grid-template-columns:1fr;}}
+  .prop-copy p{font-size:14px;color:var(--ink-soft);margin:0 0 14px;max-width:48ch;}
+  .prop-copy .hop{display:flex;gap:12px;align-items:baseline;margin-bottom:9px;font-family:"IBM Plex Mono",monospace;font-size:12.5px;}
+  .prop-copy .hop .h{color:var(--retract);font-weight:600;} .prop-copy .hop .d{color:var(--slate);margin-left:auto;}
+  .prop-graph{background:var(--paper-2);border:1px solid var(--hair-2);border-radius:8px;padding:10px;}
+
+  .arch{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--hair);border:1px solid var(--hair);border-radius:8px;overflow:hidden;}
+  @media(max-width:620px){.arch{grid-template-columns:1fr;}}
+  .acell{background:var(--paper-2);padding:20px 20px 22px;}
+  .acell .k{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--retract);margin-bottom:9px;}
+  .acell h5{font-family:"Newsreader",serif;font-weight:500;font-size:17px;margin:0 0 7px;}
+  .acell p{font-size:13px;color:var(--ink-soft);margin:0;line-height:1.55;}
+  .acell code{font-family:"IBM Plex Mono",monospace;font-size:12px;background:#fff;border:1px solid var(--hair);border-radius:3px;padding:1px 5px;color:var(--ink);}
+  .acell .v2{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.06em;color:var(--concern);border:1px solid var(--concern-bg);background:var(--concern-bg);border-radius:3px;padding:2px 6px;margin-top:8px;display:inline-block;}
+
+  footer{padding:34px 0 46px;}
+  .foot-line{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--slate);
+    border-top:1.5px solid var(--ink);padding-top:18px;}
+  .foot-line a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--hair-2);}
+  .foot-line a:hover{border-color:var(--ink);}
+  .disclaimer{font-size:11.5px;color:var(--slate);margin-top:14px;max-width:74ch;line-height:1.6;}
+
+  :focus-visible{outline:2px solid var(--retract);outline-offset:2px;}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto;}}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap mast-top">
+    <div class="wordmark">
+      <span class="glyph">CIC</span>
+      <div>
+        <h1>Citation Integrity Checker</h1>
+        <div class="sub">Retraction-risk audit for scholarly references</div>
+      </div>
+    </div>
+    <div class="mast-meta">
+      OpenAlex · Retraction Watch / Crossref · Europe PMC<br>
+      <a href="https://github.com/jmartucc97/cic" target="_blank" rel="noopener">github.com/jmartucc97/cic</a>
+    </div>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Research-integrity prototype</div>
+    <h2>Every paper stands on its citations. Some of them have already <em>fallen</em>.</h2>
+    <p class="lede">CIC reads a paper's reference list, checks each source against the retraction record, and scores how heavily the paper's evidence rests on withdrawn work — weighting <b>fabrication far above honest error</b>, and following the chain one hop deeper. It produces <b>an attention flag with an itemized ledger, not a verdict</b>.</p>
+
+    <div class="console">
+      <div class="console-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="label">cic — retraction_risk.py</span>
+      </div>
+      <div class="console-body">
+        <div class="field-row">
+          <label class="field">
+            <span class="pre mono">DOI ›</span>
+            <input id="doi" type="text" spellcheck="false" value="10.1097/synthesis.beta-blockade" aria-label="Paper DOI to audit">
+          </label>
+          <button class="run mono" id="runBtn">RUN AUDIT</button>
+        </div>
+        <div class="samples">
+          <span class="tag">Demo papers:</span>
+          <button class="chip" data-case="misconduct">flagged trial synthesis</button>
+          <button class="chip" data-case="microbiome">microbiome-cognition review</button>
+          <button class="chip" data-case="clean">clean methods paper</button>
+        </div>
+        <div id="log" aria-live="polite"></div>
+      </div>
+    </div>
+    <p class="disclaimer">Interactive demo mirroring the CLI's <code>--demo</code> output. The production tool queries the live OpenAlex, Retraction Watch (via Crossref), and Europe PMC APIs; figures below are bundled sample data, not a live lookup.</p>
+  </div>
+</section>
+
+<div id="results">
+  <div class="wrap">
+    <div class="verdict">
+      <div class="stamp" id="stamp"></div>
+      <div class="verdict-copy">
+        <h3 id="verdictTitle"></h3>
+        <p id="verdictBody"></p>
+        <div class="verdict-stats">
+          <div class="vstat"><div class="n" id="stRefs"></div><div class="k">references</div></div>
+          <div class="vstat"><div class="n" id="stFlags"></div><div class="k">retractions found</div></div>
+          <div class="vstat"><div class="n" id="stMis"></div><div class="k">misconduct-tier</div></div>
+          <div class="vstat"><div class="n" id="stProp"></div><div class="k">reached 1 hop out</div></div>
+        </div>
+        <span class="notverdict">An attention flag — not a verdict. A paper citing a retraction is not automatically wrong.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 01 severity ladder -->
+  <div class="sec"><div class="wrap">
+    <div class="sec-head"><span class="num">01</span><h4>Severity ladder</h4>
+      <span class="note">A retraction's severity is its <em>worst</em> reason. Fabrication is not a duplicate-publication notice.</span></div>
+    <div class="ladder">
+      <div class="rung">
+        <span class="code" style="background:var(--retract-bg);color:var(--retract);">TIER 3 · 1.00</span>
+        <h5>Fabrication</h5><p>Invented data, results, or images.</p><div class="wt">misconduct</div>
+      </div>
+      <div class="rung">
+        <span class="code" style="background:var(--caution-bg);color:var(--caution);">TIER 2 · 0.80</span>
+        <h5>Falsification / manipulation</h5><p>Data or image manipulation, fake peer review, paper mill.</p><div class="wt">misconduct</div>
+      </div>
+      <div class="rung">
+        <span class="code" style="background:var(--concern-bg);color:var(--concern);">TIER 1 · 0.40</span>
+        <h5>Not reproducible</h5><p>Unreliable results, error in data or analysis.</p><div class="wt">minor</div>
+      </div>
+      <div class="rung">
+        <span class="code" style="background:var(--verified-bg);color:var(--verified);">TIER 0 · 0.10</span>
+        <h5>Administrative</h5><p>Authorship dispute, copyright/legal, duplication, ethics/IRB.</p><div class="wt">minor</div>
+      </div>
+    </div>
+    <div class="ladder-foot">
+      <span class="mis"><b>Tiers 3–2 = misconduct</b> — summed undiluted, so one load-bearing fabrication moves the score regardless of bibliography length.</span>
+      <span class="min"><b>Tiers 1–0 = minor</b> — density-normalized, so a long list of harmless retractions can't manufacture a false alarm.</span>
+    </div>
+  </div></div>
+
+  <!-- 02 formula -->
+  <div class="sec"><div class="wrap">
+    <div class="sec-head"><span class="num">02</span><h4>How the score is built</h4>
+      <span class="note">Three factors multiply — the score only spikes when a <em>serious</em> retraction is <em>relied upon</em>.</span></div>
+    <div class="formula">
+      <div class="eq">
+        risk<sub>i</sub> &nbsp;=&nbsp; <span class="sev">severity</span> <span class="op">×</span> <span class="rel">reliance</span> <span class="op">×</span> <span class="stal">staleness</span><br>
+        FinalRisk &nbsp;=&nbsp; <span class="op">Σ</span> risk<sub>i</sub> <span class="op">over misconduct refs</span> &nbsp;+&nbsp; ( <span class="op">Σ</span> risk<sub>i</sub> <span class="op">over minor refs</span> ) <span class="op">/</span> √(#refs)
+      </div>
+      <div class="split">
+        <div class="mis">
+          <div class="h">severity × reliance × staleness</div>
+          <p><span class="sev" style="color:#E7A06B">Severity</span> from the tier ladder. <span class="rel" style="color:#9DC4BC">Reliance</span> is a conservative v1 default of 1.0 (OpenAlex gives no in-text context) — it can only over-flag, never hide. <span class="stal" style="color:#C9A6D4">Staleness</span> amplifies from 1.0 to 1.5 the longer a retraction sits cited-and-unaddressed.</p>
+        </div>
+        <div class="min">
+          <div class="h">why the split</div>
+          <p>Misconduct-tier hits are summed at full weight; minor hits are divided by √(#refs). Every coefficient here is a labeled default to be tuned against the validation set — <code style="color:#C7CEC9">validate.py</code> reports ROC-AUC on matched case/control papers — not defended as correct.</p>
+        </div>
+      </div>
+    </div>
+  </div></div>
+
+  <!-- 03 ledger -->
+  <div class="sec"><div class="wrap">
+    <div class="sec-head"><span class="num">03</span><h4>Evidence ledger</h4>
+      <span class="note">Every flagged reference, its three factors, and what it contributes.</span></div>
+    <div class="ledger" id="ledger"></div>
+  </div></div>
+
+  <!-- 04 propagation -->
+  <div class="sec"><div class="wrap">
+    <div class="sec-head"><span class="num">04</span><h4>One hop deeper (<code style="font-family:'IBM Plex Mono',monospace;font-size:15px">--depth 2</code>)</h4>
+      <span class="note">Retractions reached <em>through</em> your references — with the entry point named.</span></div>
+    <div class="prop">
+      <div class="prop-copy">
+        <p>CIC can walk one hop out to find retractions a paper reaches indirectly, attribute <em>which reference</em> each one enters through, and decay its risk. Anything already counted at depth 0–1 is excluded, so nothing is double-charged.</p>
+        <div class="hop"><span class="h">HOP 0</span> the audited paper <span class="d">reference list read</span></div>
+        <div class="hop"><span class="h">HOP 1</span> direct citations <span class="d">full weight</span></div>
+        <div class="hop"><span class="h">HOP 2</span> citations-of-citations <span class="d">decayed · entry point attributed</span></div>
+      </div>
+      <div class="prop-graph"><svg id="propSvg" viewBox="0 0 300 220" role="img" aria-label="Citation propagation graph showing direct and one-hop-out retraction exposure"></svg></div>
+    </div>
+  </div></div>
+
+  <!-- 05 architecture -->
+  <div class="sec"><div class="wrap">
+    <div class="sec-head"><span class="num">05</span><h4>How the audit runs</h4></div>
+    <div class="arch">
+      <div class="acell"><div class="k">Resolve</div><h5>Pull the reference graph</h5>
+        <p>The DOI is expanded through <code>OpenAlex</code> (free, no key) into its full outgoing reference list.</p></div>
+      <div class="acell"><div class="k">Match</div><h5>Cross the retraction record</h5>
+        <p>Each reference is checked against the <code>Retraction Watch</code> database (free via Crossref); the worst reason sets its tier.</p></div>
+      <div class="acell"><div class="k">Weigh reliance</div><h5>Load-bearing, or in passing?</h5>
+        <p><code>citation_context.py</code> reads <code>Europe PMC</code> JATS XML to tell build-on from dispute. A citation that <em>refutes</em> a retraction is science's immune system — it shouldn't be penalized.</p>
+        <span class="v2">v1 = default 1.0 · full-text stance is the v2 hook</span></div>
+      <div class="acell"><div class="k">Score</div><h5>One number, every deduction traceable</h5>
+        <p>severity × reliance × staleness sums into <code>FinalRisk</code>, banded HIGH / MODERATE / LOW — with each contribution itemized in the ledger.</p></div>
+    </div>
+  </div></div>
+
+  <footer><div class="wrap">
+    <div class="foot-line">
+      <span>CIC · Citation Integrity Checker — Python CLI · MIT</span>
+      <span><a href="https://github.com/jmartucc97/cic" target="_blank" rel="noopener">source on github ↗</a></span>
+    </div>
+    <p class="disclaimer">Built on open data from OpenAlex and Retraction Watch / Crossref. Retraction ≠ wrong: retractions span honest error to fabrication, the severity tiers exist so harmless ones don't trigger alarm, and the reason string is surfaced verbatim so a human can overrule the tier. A flag means a cited work was later withdrawn — information a reader deserves, not an accusation against the citing paper.</p>
+  </div></footer>
+</div>
+
+<script>
+// ---------- Bundled demo cases — mirror retraction_risk.py --demo output ----------
+// FinalRisk higher = worse. Bands: >=1.2 HIGH, >=0.5 MODERATE, else LOW.
+const CASES = {
+  misconduct:{
+    doi:"10.1097/synthesis.beta-blockade",
+    title:"Perioperative beta-blockade in non-cardiac surgery: a synthesis",
+    refs:28, final:2.34, band:"HIGH", nMis:2, nFlags:3, prop:{direct:3,hop2:0},
+    verdict:"A fabricated trial is doing the heavy lifting",
+    body:"A cornerstone reference was retracted for fabricated data and is relied on as primary support; a second falsification compounds it. Two misconduct-tier hits are summed undiluted, so the score lands high regardless of bibliography length.",
+    ledger:[
+      {i:4,title:"DECREASE-family trial: beta-blockade reduces perioperative events",doi:"10.1161/hyp.decrease",status:{t:"RETRACTED",cls:"retract"},sev:1.00,sevLbl:"Tier 3 · fabrication",rel:1.00,stal:1.30,misconduct:true,stance:{k:"build",t:"built on as primary support"}},
+      {i:9,title:"Pooled mortality outcomes across surgical cohorts",doi:"10.1001/jama.pool",status:{t:"RETRACTED",cls:"caution"},sev:0.80,sevLbl:"Tier 2 · falsification",rel:1.00,stal:1.20,misconduct:true,stance:{k:"build",t:"built on as support"}},
+      {i:16,title:"Heart-rate variability under anesthesia",doi:"10.1213/ane.hrv",status:{t:"RETRACTED",cls:"concern"},sev:0.40,sevLbl:"Tier 1 · not reproducible",rel:1.00,stal:1.10,misconduct:false,stance:{k:"dispute",t:"cited to refute — v2 would lower reliance"}},
+      {i:1,title:"ESC/ESA guidelines on non-cardiac surgery",doi:"10.1093/eurheartj.esc",status:{t:"CLEAN",cls:"verified"}}
+    ]
+  },
+  microbiome:{
+    doi:"10.1016/j.cell.microbiome-cognition",
+    title:"Gut microbiota composition and cognitive decline: a narrative review",
+    refs:34, final:1.02, band:"MODERATE", nMis:1, nFlags:3, prop:{direct:2,hop2:1},
+    verdict:"Two withdrawn sources in load-bearing positions",
+    body:"One manipulation-tier retraction is built on directly, and a second retraction is reached one hop out through reference 19 (decayed, entry point attributed). The core argument may still hold — but the ground has shifted under three citations.",
+    ledger:[
+      {i:7,title:"Microbial metabolites drive hippocampal plasticity in aged mice",doi:"10.1038/nature.metabolites",status:{t:"RETRACTED",cls:"caution"},sev:0.80,sevLbl:"Tier 2 · manipulation",rel:1.00,stal:1.15,misconduct:true,stance:{k:"build",t:"built on as evidence"}},
+      {i:14,title:"Probiotic supplementation and MMSE scores: an RCT",doi:"10.1016/jns.probiotic",status:{t:"RETRACTED",cls:"concern"},sev:0.40,sevLbl:"Tier 1 · not reproducible",rel:1.00,stal:1.05,misconduct:false,stance:{k:"build",t:"built on as evidence"}},
+      {i:19,title:"Short-chain fatty acids in cerebrospinal fluid  → reaches a retraction 1 hop out",doi:"10.1007/scfa.csf",status:{t:"DEPTH-2",cls:"concern"},depth2:true,sev:0.40,sevLbl:"Tier 1 (1 hop out)",rel:1.00,stal:1.10,decay:0.35,misconduct:false,stance:null},
+      {i:3,title:"The aging gut barrier: a systematic review",doi:"10.1111/apt.gutbarrier",status:{t:"CLEAN",cls:"verified"}}
+    ]
+  },
+  clean:{
+    doi:"10.1021/analchem.lcms-method",
+    title:"A validated LC-MS/MS method for plasma metabolite quantification",
+    refs:41, final:0.02, band:"LOW", nMis:0, nFlags:1, prop:{direct:0,hop2:0},
+    verdict:"No misconduct in the evidentiary base",
+    body:"One reference carries a duplicate-publication retraction — a Tier 0 administrative reason. Multiplied by its low severity and density-normalized across 41 references, it lands near zero. The design working as intended: a harmless retraction doesn't raise an alarm.",
+    ledger:[
+      {i:11,title:"Matrix effects in electrospray ionization",doi:"10.1007/matrix.esi",status:{t:"RETRACTED",cls:"verified"},sev:0.10,sevLbl:"Tier 0 · duplicate publication",rel:1.00,stal:1.05,misconduct:false,stance:{k:"mention",t:"mentioned in passing"}},
+      {i:2,title:"Guidelines for bioanalytical method validation",doi:"10.1016/jpba.guidelines",status:{t:"CLEAN",cls:"verified"}},
+      {i:27,title:"Isotope-labeled internal standards in quantitation",doi:"10.1021/ac.isotope",status:{t:"CLEAN",cls:"verified"}}
+    ]
+  }
+};
+
+const COLORS={retract:"#A62016",caution:"#9A6A12",concern:"#6B5E9A",verified:"#0E6E63",slate:"#5B6670"};
+const STATUS_STYLE={retract:{bg:"#F6E3E0",fg:"#A62016"},caution:{bg:"#F4E9D4",fg:"#9A6A12"},concern:{bg:"#EAE6F2",fg:"#6B5E9A"},verified:{bg:"#DCEBE8",fg:"#0E6E63"}};
+const BAND_COLOR={HIGH:COLORS.retract,MODERATE:COLORS.caution,LOW:COLORS.verified};
+
+const $=s=>document.querySelector(s);
+const doiInput=$("#doi"), runBtn=$("#runBtn"), logEl=$("#log"), resultsEl=$("#results");
+const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+document.querySelectorAll(".chip").forEach(c=>{
+  c.addEventListener("click",()=>{ doiInput.value=CASES[c.dataset.case].doi; runAudit(c.dataset.case); });
+});
+runBtn.addEventListener("click",()=>{
+  const key=Object.keys(CASES).find(k=>CASES[k].doi===doiInput.value.trim())||"misconduct";
+  runAudit(key);
+});
+
+function runAudit(key){
+  const c=CASES[key];
+  runBtn.disabled=true; resultsEl.style.display="none"; logEl.style.display="block"; logEl.innerHTML="";
+  const lines=[
+    `→ resolving ${c.doi} via OpenAlex …`,
+    `<span class="ok">✓</span> ${c.refs} references retrieved`,
+    `→ matching against Retraction Watch (Crossref) …`,
+    c.nFlags>0 ? `<span class="hit">!</span> ${c.nFlags} retraction(s) found · ${c.nMis} misconduct-tier` : `<span class="ok">✓</span> no retractions found`,
+    `→ weighing severity × reliance × staleness …`,
+    c.prop.hop2>0 ? `→ --depth 2: ${c.prop.hop2} reached one hop out, entry point attributed …` : `→ --depth 1: direct citations only …`,
+    `<span class="ok">✓</span> FinalRisk = ${c.final.toFixed(2)}  [${c.band}]`
+  ];
+  let d=0;
+  lines.forEach(t=>{ const el=document.createElement("div"); el.className="ln"; el.innerHTML=t;
+    el.style.animationDelay=reduce?"0s":(d+"s"); logEl.appendChild(el); d+=reduce?0:0.42; });
+  setTimeout(()=>{render(c);runBtn.disabled=false;}, reduce?60:(d*1000+250));
+}
+
+function render(c){
+  const col=BAND_COLOR[c.band];
+  const frac=Math.min(c.final/1.6,1); // visual fill; ~1.6 ≈ full ring
+  const st=$("#stamp");
+  st.innerHTML=`
+    <svg viewBox="0 0 176 176" aria-hidden="true">
+      <circle cx="88" cy="88" r="82" fill="none" stroke="${col}" stroke-width="1.5" opacity=".3"/>
+      <circle cx="88" cy="88" r="73" fill="none" stroke="${col}" stroke-width="3" opacity=".18"/>
+      <circle cx="88" cy="88" r="73" fill="none" stroke="${col}" stroke-width="3"
+        stroke-dasharray="${2*Math.PI*73}" stroke-dashoffset="${2*Math.PI*73*(1-frac)}"
+        transform="rotate(-90 88 88)" stroke-linecap="round"/>
+    </svg>
+    <div style="text-align:center;">
+      <div class="band" style="color:${col}">${c.band}</div>
+      <div class="val" style="color:${col}">${c.final.toFixed(2)}</div>
+      <div class="of">FINALRISK · HIGHER = WORSE</div>
+    </div>`;
+  $("#verdictTitle").textContent=c.verdict;
+  $("#verdictBody").textContent=c.body;
+  $("#stRefs").textContent=c.refs;
+  $("#stFlags").textContent=c.nFlags;
+  $("#stMis").textContent=c.nMis;
+  $("#stProp").textContent=c.prop.hop2;
+
+  const L=$("#ledger");
+  L.innerHTML=`<div class="lrow head"><span>#</span><span>Reference &amp; factors</span>
+      <span class="col-status">Status</span><span class="col-risk" style="text-align:right">risk</span></div>`;
+  c.ledger.forEach(r=>{
+    const ss=STATUS_STYLE[r.status.cls];
+    let factors="", stance="", riskVal="—", riskCls="zero";
+    if(r.sev!==undefined){
+      let risk=r.sev*r.rel*r.stal; if(r.decay) risk*=r.decay;
+      riskVal="+"+risk.toFixed(2); riskCls="pos";
+      const decayChip = r.decay?`<span class="fchip"><span class="lbl">decay</span> <b>×${r.decay}</b></span>`:"";
+      factors=`<div class="factors">
+        <span class="fchip sev"><span class="lbl">sev</span> <b>${r.sev.toFixed(2)}</b> ${r.sevLbl}</span>
+        <span class="fx">×</span>
+        <span class="fchip rel"><span class="lbl">rel</span> <b>${r.rel.toFixed(2)}</b> v1 default</span>
+        <span class="fx">×</span>
+        <span class="fchip stal"><span class="lbl">stal</span> <b>${r.stal.toFixed(2)}</b></span>
+        ${decayChip?'<span class="fx">×</span>'+decayChip:""}
+        <span class="fx">= <b style="color:${COLORS.retract}">${risk.toFixed(2)}</b></span>
+        <span class="fx" style="color:${r.misconduct?COLORS.retract:COLORS.verified}">${r.misconduct?"misconduct · undiluted":(r.depth2?"1 hop out":"minor · ÷√refs")}</span>
+      </div>`;
+    }
+    if(r.stance) stance=`<div class="stance ${r.stance.k}">stance: <b>${r.stance.k.toUpperCase()}</b> · ${r.stance.t}</div>`;
+    const mobile=`<div class="ref-mobile"><span class="status" style="background:${ss.bg};color:${ss.fg}">${r.status.t}</span>
+      <span class="risk ${riskCls}" style="text-align:left">${riskVal}</span></div>`;
+    const row=document.createElement("div"); row.className="lrow";
+    row.innerHTML=`<span class="idx">${String(r.i).padStart(2,"0")}</span>
+      <div class="ref"><div class="title">${r.title}</div><div class="doi">${r.doi}</div>${factors}${stance}${mobile}</div>
+      <span class="col-status"><span class="status" style="background:${ss.bg};color:${ss.fg}">${r.status.t}</span></span>
+      <span class="col-risk risk ${riskCls}">${riskVal}</span>`;
+    L.appendChild(row);
+  });
+
+  drawProp(c.prop);
+  resultsEl.style.display="block";
+  if(!reduce) resultsEl.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+function drawProp(p){
+  const svg=$("#propSvg"); const cx=60, cy=110;
+  let out=`<line x1="${cx}" y1="${cy}" x2="150" y2="55" stroke="#C2C8BF" stroke-width="1"/>
+    <line x1="${cx}" y1="${cy}" x2="150" y2="110" stroke="#C2C8BF" stroke-width="1"/>
+    <line x1="${cx}" y1="${cy}" x2="150" y2="165" stroke="#C2C8BF" stroke-width="1"/>
+    <line x1="150" y1="110" x2="245" y2="150" stroke="#E0D2CF" stroke-width="1" stroke-dasharray="3 3"/>`;
+  const h1=[{y:55,bad:p.direct>=1},{y:110,bad:p.direct>=2},{y:165,bad:p.direct>=3}];
+  h1.forEach(n=>{ const col=n.bad?COLORS.retract:COLORS.verified; const fill=n.bad?"#F6E3E0":"#DCEBE8";
+    out+=`<circle cx="150" cy="${n.y}" r="9" fill="${fill}" stroke="${col}" stroke-width="2"/>`; });
+  const h2=[{y:150,bad:p.hop2>=1}];
+  h2.forEach(n=>{ const col=n.bad?COLORS.concern:"#C2C8BF"; const fill=n.bad?"#EAE6F2":"#F6F7F4";
+    out+=`<circle cx="245" cy="${n.y}" r="6.5" fill="${fill}" stroke="${col}" stroke-width="1.8"/>`; });
+  out+=`<circle cx="${cx}" cy="${cy}" r="13" fill="#16202B"/>
+    <text x="${cx}" y="${cy+4}" text-anchor="middle" fill="#F6F7F4" font-family="IBM Plex Mono" font-size="10" font-weight="600">P</text>
+    <text x="${cx}" y="200" text-anchor="middle" fill="#5B6670" font-family="IBM Plex Mono" font-size="9">paper</text>
+    <text x="150" y="200" text-anchor="middle" fill="#5B6670" font-family="IBM Plex Mono" font-size="9">hop 1</text>
+    <text x="245" y="200" text-anchor="middle" fill="#5B6670" font-family="IBM Plex Mono" font-size="9">hop 2</text>`;
+  svg.innerHTML=out;
+}
+
+window.addEventListener("load",()=>{ if(!reduce) runAudit("misconduct"); });
+</script>
+</body>
+</html>
